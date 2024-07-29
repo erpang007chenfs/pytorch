@@ -278,6 +278,7 @@ public:
   // returns a CPU-mapping of the input buffer and its retainCount,
   // if only it has Shared storage-mode and allocated on MPSAllocator
   std::pair<const void*, uint32_t> getSharedBufferPtr(const void* buffer);
+  std::pair<void*, uint32_t> unsafeGetSharedBufferPtr(void* buffer);
   // records events for a list of MTLBuffers (list is used to lock the mutex once)
   // returns true if records any event (given if passed buffers exist and are shared-storage)
   bool recordEvents(c10::ArrayRef<const void*> buffers);

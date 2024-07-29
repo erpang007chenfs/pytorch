@@ -23,6 +23,7 @@ public:
   virtual void setBufferShape(const void* ptr, const IntArrayRef& shape) const = 0;
   virtual bool isSharedBuffer(const void* ptr) const = 0;
   virtual bool isSharedStorageSupported() const = 0;
+  virtual bool isSharedAllocatorUsage() const = 0;
   virtual c10::DataPtr allocScalarBufferWithValue(void* value, size_t size) const = 0;
   virtual std::string formatSize(size_t size) const = 0;
   virtual void setLowWatermarkRatio(double ratio) const = 0;
@@ -35,6 +36,7 @@ public:
   virtual size_t getDriverAllocatedMemory() const = 0;
   virtual size_t getRecommendedMaxMemory() const = 0;
   virtual std::pair<const void*, uint32_t> getSharedBufferPtr(const void* ptr) const = 0;
+  virtual std::pair<void*, uint32_t> unsafeGetSharedBufferPtr(void* ptr) const = 0;
   virtual bool recordEvents(c10::ArrayRef<const void*> buffers) const = 0;
   virtual bool waitForEvents(c10::ArrayRef<const void*> buffers) const = 0;
 };

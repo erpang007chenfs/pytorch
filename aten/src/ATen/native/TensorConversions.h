@@ -9,6 +9,15 @@
 namespace at {
   class Tensor;
 namespace native {
+
+bool to_will_cow(  // Copy-on-write
+    const Tensor& self,
+    std::optional<ScalarType> dtype,
+    std::optional<Layout> layout,
+    std::optional<Device> device,
+    bool copy,
+    std::optional<c10::MemoryFormat> optional_memory_format);
+
 bool to_will_alias(
     const Tensor& self,
     std::optional<ScalarType> dtype,

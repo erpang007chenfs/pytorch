@@ -548,6 +548,22 @@ std::pair<const void*, uint32_t> MPSHeapAllocatorImpl::getSharedBufferPtr(const 
   return {buffer_block->cpu_ptr, buffer_block->retainCount()};
 }
 
+std::pair<void*, uint32_t> MPSHeapAllocatorImpl::unsafeGetSharedBufferPtr(void* ptr) {
+  std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
+  BufferBlock* buffer_block = get_allocated_buffer_block(ptr);
+  // return if buffer was not allocated on MPSAllocator or isn't a Shared buffer
+  if (!buffer_block || !(buffer_block->heap->pool->usage & UsageFlags::SHARED)) {
+    return {nullptr, 0};
+  }
+  if (!buffer_block->cpu_ptr) {
+    buffer_block->cpu_ptr = [buffer_block->buffer contents];
+  }
+  return {buffer_block->cpu_ptr, buffer_block->retainCount()};
+}
+
+
+
 bool MPSHeapAllocatorImpl::recordEvents(c10::ArrayRef<const void*> buffers) {
   bool recordedEvent = false;
   std::lock_guard<std::recursive_mutex> lock(m_mutex);
@@ -756,11 +772,17 @@ struct TORCH_API MPSAllocator final : public IMPSAllocator {
   std::pair<const void*, uint32_t> getSharedBufferPtr(const void* ptr) const override {
     return _getAllocImpl().getSharedBufferPtr(ptr);
   }
+  std::pair<void*, uint32_t> unsafeGetSharedBufferPtr(void* ptr) const override {
+    return _getAllocImpl().unsafeGetSharedBufferPtr(ptr);
+  }
   bool isSharedBuffer(const void* ptr) const override {
     return _getAllocImpl().isSharedBuffer(ptr);
   }
   bool isSharedStorageSupported() const override {
     return m_has_unified_memory;
+  }
+  bool isSharedAllocatorUsage() const override {
+    return m_usage & HeapAllocator::UsageFlags::SHARED;
   }
   void emptyCache() const override {
     _getAllocImpl().emptyCache();

@@ -62,6 +62,11 @@
 #include <algorithm>
 #include <numeric>
 
+#if USE_MPS
+#include <ATen/mps/MPSDevice.h>
+#include <ATen/mps/MPSAllocatorInterface.h>
+#endif  // USE_MPS
+
 namespace at::native {
 
 namespace {
@@ -414,6 +419,33 @@ bool to_will_alias(
      self.suggest_memory_format() == memory_format);
 }
 
+// Currently only supports MPSTensor.to("CPU") if using unified memory and shared allocator.
+bool to_will_cow(
+    const Tensor& self,
+    std::optional<ScalarType> dtype,
+    std::optional<Layout> layout,
+    std::optional<Device> device,
+    bool copy,
+    std::optional<c10::MemoryFormat> optional_memory_format) {
+#if USE_MPS
+  auto memory_format = optional_memory_format.value_or(MemoryFormat::Preserve);
+  // Default MPS allocator
+  auto* allocator = reinterpret_cast<at::mps::IMPSAllocator*>(at::mps::GetMPSAllocator());
+  auto is_shared_allocator_and_unified_memory = allocator->isSharedStorageSupported() && allocator->isSharedAllocatorUsage();
+  auto is_mps_to_cpu = self.device().is_mps() && (device == std::nullopt || device->is_cpu());
+  auto is_eligible_for_mps = is_mps_to_cpu && is_shared_allocator_and_unified_memory;
+
+  return is_null_or_equal_to(dtype, self.dtype().toScalarType()) &&
+    is_null_or_equal_to(layout, self.layout()) &&
+    is_eligible_for_mps &&
+    !copy &&
+    (memory_format == MemoryFormat::Preserve ||
+     self.suggest_memory_format() == memory_format);
+#else
+  return false;
+#endif  // USE_MPS
+}
+
 static inline Tensor to_impl(
     const Tensor& self,
     std::optional<ScalarType> dtype,
@@ -428,6 +460,12 @@ static inline Tensor to_impl(
   if (to_will_alias(self, dtype, layout, device, copy, optional_memory_format)) {
     return self;
   }
+
+  if (to_will_cow(self, dtype, layout, device, copy, optional_memory_format)) {
+    // create a copy-on-write context
+    return at::_lazy_clone(self, device);
+  }
+
   return at::_to_copy(
       self, dtype, layout, device, pin_memory, non_blocking, optional_memory_format);
 }

@@ -2,6 +2,12 @@
 #include <ATen/core/Tensor.h>
 #include <c10/util/SmallBuffer.h>
 #include <c10/core/impl/COW.h>
+#include <c10/core/impl/COWDeleter.h>
+#ifdef USE_MPS
+#include <ATen/mps/MPSDevice.h>
+#include <ATen/mps/MPSAllocatorInterface.h>
+#include <c10/core/CPUAllocator.h>
+#endif // USE_MPS
 
 #ifndef AT_PER_OPERATOR_HEADERS
 #include <ATen/Functions.h>
@@ -91,14 +97,53 @@ bool _has_same_storage_numel(const at::Tensor& base, const at::Tensor& other) {
   return base.storage().sym_nbytes() / base.itemsize() == other.storage().sym_nbytes() / other.itemsize();
 }
 
-Tensor _lazy_clone(Tensor const& self) {
+
+Tensor _lazy_clone(Tensor const& self, std::optional<c10::Device> device) {
   c10::StorageImpl* self_storage = self.storage().unsafeGetStorageImpl();
   c10::intrusive_ptr<c10::StorageImpl> storage =
     c10::impl::cow::lazy_clone_storage(*self_storage);
   TORCH_CHECK(storage != nullptr);
+
+  auto device_key_set = self.key_set();
+
+#if USE_MPS
+  // Default device is expected to be CPU
+  if (device == std::nullopt) {
+    device = c10::Device(kCPU);
+  }
+  // MPS Tensor to CPU Tensor special handling.
+  if (self.device().type() == kMPS && device.value().type() == kCPU) {
+    TORCH_CHECK(device.value().is_cpu());
+    // Convert the DispatchKeyset from MPS to CPU
+    device_key_set = self.key_set().remove_backend(c10::BackendComponent::MPSBit).add(c10::DispatchKey::CPU);
+
+    // Convert the DataPtr from MPS pointer to CPU pointer
+    // TODO: It might be better to embed this function in lazy_clone_storage.
+    at::DataPtr& d_ptr = storage->_mutable_data_ptr_no_checks();
+    void* cpu_ptr = std::get<0>(
+      reinterpret_cast<at::mps::IMPSAllocator*>(at::mps::GetMPSAllocator())->unsafeGetSharedBufferPtr(d_ptr.get())
+    );
+
+    // Copy the cow context since we adjusted the pointer from MPS pointer to CPU pointer.
+    void* ctx;
+    {
+      auto* ctx_cow = d_ptr.cast_context<c10::impl::cow::COWDeleterContext>(
+          c10::impl::cow::cow_deleter
+        );
+      TORCH_INTERNAL_ASSERT(ctx_cow != nullptr);
+      ctx_cow->increment_refcount();
+      ctx = ctx_cow;
+    }
+
+    // Set the DataPtr and the allocator
+    storage->set_data_ptr_noswap(DataPtr{cpu_ptr, ctx, c10::impl::cow::cow_deleter, device.value()});
+    storage->set_allocator(GetDefaultCPUAllocator());
+  }
+#endif  // USE_MPS
+
   auto tensor = c10::make_intrusive<c10::TensorImpl>(
       c10::Storage(std::move(storage)),
-      self.key_set(),
+      device_key_set,
       self.dtype());
   tensor->set_sizes_and_strides(self.sym_sizes(),
                                 self.sym_strides(),
